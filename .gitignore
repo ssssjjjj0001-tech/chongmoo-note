@@ -1,0 +1,23 @@
+# 비밀 값 (API 키 등)
+.env
+.env.*
+.streamlit/secrets.toml
+
+# 파이썬 실행 시 자동 생성되는 캐시
+__pycache__/
+*.pyc
+
+# 파이썬 가상환경
+.venv/
+venv/
+
+# Claude Code 개인 설정 (내 컴퓨터 전용)
+.claude/settings.local.json
+
+# 중복 파일 (idea/user-sheet.png 와 내용이 같음)
+idea/user-sheet-2.png
+
+# 운영체제가 자동으로 만드는 파일
+Thumbs.db
+desktop.ini
+.DS_Store

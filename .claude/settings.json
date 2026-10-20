@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"C:/Users/user/Desktop/my_service/.claude/hooks/protect_prd.py\"",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"C:/Users/user/Desktop/my_service/.claude/hooks/block-lorem.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
