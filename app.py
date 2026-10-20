@@ -73,7 +73,8 @@ except APIError:
     st.stop()
 
 # 모임 목록
-GROUP_NAMES = [g["group_name"] for g in load_rows("group")]
+groups = load_rows("group")
+GROUP_NAMES = [g["group_name"] for g in groups]
 
 
 def add_group(name):
@@ -88,6 +89,35 @@ def add_group(name):
         # 다음 화면에서 새 모임을 골라 둠 (모임 선택 칸이 그려지기 전에 넣어야 함)
         st.session_state.new_group = name
         st.rerun()
+
+
+def delete_group(group):
+    if group is None:
+        st.error("삭제할 모임을 골라주세요")
+        return
+    name = group["group_name"]
+    # 이 모임에 팀원이나 지출이 있으면 지우지 않음 (그 줄들이 어느 모임 것도 아니게 되므로)
+    used = (
+        supabase.table(TABLE)
+        .select("id")
+        .in_("row_type", ["member", "expense"])
+        .eq("group_name", name)
+        .execute()
+        .data
+    )
+    if used:
+        st.error(f"{name}에 등록된 팀원·지출이 {len(used)}건 있어서 삭제할 수 없어요. 팀원·지출을 먼저 삭제해 주세요")
+        return
+    try:
+        deleted = supabase.table(TABLE).delete().eq("id", group["id"]).execute().data
+    except APIError as e:
+        st.error(f"Supabase 에서 삭제하지 못했어요 : {e.message}")
+        return
+    if not deleted:
+        # 삭제 권한(policy)이 없으면 오류 없이 0줄만 지워짐
+        st.error("삭제되지 않았어요. Supabase 에서 삭제 권한(policy)을 확인해 주세요")
+        return
+    st.rerun()
 
 
 def clear_inputs():
@@ -110,6 +140,19 @@ with st.sidebar:
         new_name = st.text_input("모임 이름", placeholder="예: 친정모임", key="new_group_name")
         if st.button("모임 등록", width="stretch"):
             add_group(new_name)
+
+        if groups:
+            st.divider()
+            target = st.selectbox(
+                "잘못 등록한 모임 삭제",
+                groups,
+                index=None,
+                format_func=lambda g: g["group_name"],
+                placeholder="삭제할 모임 선택",
+                key="delete_group_target",
+            )
+            if st.button("삭제", width="stretch", key="delete_group"):
+                delete_group(target)
 
 if not GROUP_NAMES:
     st.title("경비 지출 입력")
