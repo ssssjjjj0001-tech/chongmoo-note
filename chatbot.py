@@ -32,6 +32,13 @@ BOT_IMAGE = Path(__file__).parent / "bot.png"
 
 GREETING = "안녕하세요! 이 서비스에 대해 궁금한 걸 물어보세요"
 
+# 답 점검 : 정확히 세 줄 · 300자 이하가 아니면 한 번 더 묻고, 두 번 다 벗어나면 RETRY_MESSAGE 를 띄움
+# UNSURE_PREFIX 로 시작하는 답은 점검 없이 통과
+ANSWER_LINES = 3
+ANSWER_MAX_CHARS = 300
+UNSURE_PREFIX = "[확실하지 않은 내용이에요]"
+RETRY_MESSAGE = "다시 시도해 주세요"
+
 # 대화창에서 고르는 말투 : 화면에 보이는 이름 → AI 에게 주는 말투 지시
 TONES = {
     "친절하게": "부드럽고 친절한 존댓말(~해요)로 답해.",
@@ -116,6 +123,15 @@ def load_logs():
         return []
 
 
+def answer_ok(text):
+    # 화면에 보여줘도 되는 답인지 점검
+    text = text.strip()
+    if text.startswith(UNSURE_PREFIX):
+        return True
+    lines = text.split("\n")
+    return len(lines) == ANSWER_LINES and all(line.strip() for line in lines) and len(text) <= ANSWER_MAX_CHARS
+
+
 def ask(question):
     api_key = os.environ.get("GEMINI_API_KEY", "").strip()
     if not api_key:
@@ -126,12 +142,18 @@ def ask(question):
         # 이전 대화를 이어가도록 직전 답의 id 를 넘김
         if st.session_state.chat_last_id:
             options["previous_interaction_id"] = st.session_state.chat_last_id
-        interaction = client.interactions.create(
-            model=MODEL,
-            system_instruction=system_instruction(),
-            input=question,
-            **options,
-        )
+        # 점검을 못 넘으면 같은 질문을 한 번 더 물음 (못 넘은 답은 대화에 이어 붙이지 않음)
+        for _ in range(2):
+            interaction = client.interactions.create(
+                model=MODEL,
+                system_instruction=system_instruction(),
+                input=question,
+                **options,
+            )
+            if answer_ok(interaction.output_text):
+                break
+        else:
+            return RETRY_MESSAGE
     except Exception as e:
         return f"Gemini 에서 답을 받지 못했어요 : {e}"
     st.session_state.chat_last_id = interaction.id

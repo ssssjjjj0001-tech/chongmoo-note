@@ -15,7 +15,7 @@ load_dotenv()
 supabase = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_KEY"])
 
 # submissions 표 : 한 표에 모임 줄(row_type=group), 팀원 줄(row_type=member), 지출 줄(row_type=expense)을 함께 쌓음
-# 팀원 줄과 지출 줄은 group_name 칸으로 어느 모임 것인지 나눔
+# 팀원 줄과 지출 줄은 group_name 칸으로 어느 모임 것인지, book 칸으로 어느 장부(친목/여행) 것인지 나눔
 TABLE = "submissions"
 
 # group_name 칸이 없을 때 Supabase SQL Editor 에서 한 번 실행할 SQL
@@ -38,6 +38,25 @@ where not exists (
   select 1 from submissions where row_type = 'group' and group_name = '여행모임'
 );"""
 
+# book 칸이 없을 때 Supabase SQL Editor 에서 한 번 실행할 SQL
+# 기존 지출은 구분이 비어 있으면 친목, 예약/현장이면 여행으로, 기존 팀원은 친목으로 옮김
+BOOK_SQL = """alter table submissions add column if not exists book text;
+
+alter table submissions drop constraint if exists submissions_book_check;
+alter table submissions add constraint submissions_book_check
+  check (book is null or book in ('친목', '여행'));
+
+update submissions set book = case when category is null then '친목' else '여행' end
+where book is null and row_type = 'expense';
+
+update submissions set book = '친목'
+where book is null and row_type = 'member';"""
+
+# 장부 : 친목모임 지출(화면 1)과 여행 경비(화면 3)를 따로 관리
+BOOKS = ["친목", "여행"]
+BOOK_TITLE = {"친목": "친목모임", "여행": "여행"}
+LIST_TITLE = {"친목": "친목모임 지출", "여행": "여행 경비 지출"}
+
 COLUMNS = ["구분", "날짜", "항목", "금액", "낸 사람", "돌려줄 금액"]
 
 MONEY_COLUMNS = {
@@ -46,11 +65,13 @@ MONEY_COLUMNS = {
 }
 
 
-def load_rows(row_type, group=None):
-    # 넣은 순서대로 불러오기 (group 을 주면 그 모임 것만)
+def load_rows(row_type, group=None, book=None):
+    # 넣은 순서대로 불러오기 (group, book 을 주면 그 모임·장부 것만)
     query = supabase.table(TABLE).select("*").eq("row_type", row_type)
     if group is not None:
         query = query.eq("group_name", group)
+    if book is not None:
+        query = query.eq("book", book)
     return query.order("created_at").execute().data
 
 
@@ -64,13 +85,28 @@ def save(row, done_message):
     return True
 
 
-# group_name 칸이 있는지 먼저 확인
-try:
-    supabase.table(TABLE).select("group_name").limit(1).execute()
-except APIError:
-    st.error("모임 이름을 저장할 칸(group_name)이 Supabase 표에 아직 없어요. Supabase SQL Editor 에서 아래 SQL 을 한 번 실행한 뒤 새로고침해 주세요")
-    st.code(GROUP_SQL, language="sql")
-    st.stop()
+def delete_rows(ids):
+    # 고른 줄들을 한 번에 지움
+    try:
+        deleted = supabase.table(TABLE).delete().in_("id", ids).execute().data
+    except APIError as e:
+        st.error(f"Supabase 에서 삭제하지 못했어요 : {e.message}")
+        return
+    if len(deleted) < len(ids):
+        # 삭제 권한(policy)이 없으면 오류 없이 0줄만 지워짐
+        st.error("삭제되지 않았어요. Supabase 에서 삭제 권한(policy)을 확인해 주세요")
+        return
+    st.rerun()
+
+
+# group_name, book 칸이 있는지 먼저 확인
+for column, sql in [("group_name", GROUP_SQL), ("book", BOOK_SQL)]:
+    try:
+        supabase.table(TABLE).select(column).limit(1).execute()
+    except APIError:
+        st.error(f"저장할 칸({column})이 Supabase 표에 아직 없어요. Supabase SQL Editor 에서 아래 SQL 을 한 번 실행한 뒤 새로고침해 주세요")
+        st.code(sql, language="sql")
+        st.stop()
 
 # 모임 목록
 groups = load_rows("group")
@@ -91,42 +127,39 @@ def add_group(name):
         st.rerun()
 
 
-def delete_group(group):
-    if group is None:
-        st.error("삭제할 모임을 골라주세요")
+def delete_groups(checked):
+    if not checked:
+        st.error("삭제할 모임에 체크해 주세요")
         return
-    name = group["group_name"]
-    # 이 모임에 팀원이나 지출이 있으면 지우지 않음 (그 줄들이 어느 모임 것도 아니게 되므로)
+    names = [g["group_name"] for g in checked]
+    # 팀원이나 지출이 있는 모임은 지우지 않음 (그 줄들이 어느 모임 것도 아니게 되므로)
     used = (
         supabase.table(TABLE)
-        .select("id")
+        .select("group_name")
         .in_("row_type", ["member", "expense"])
-        .eq("group_name", name)
+        .in_("group_name", names)
         .execute()
         .data
     )
     if used:
-        st.error(f"{name}에 등록된 팀원·지출이 {len(used)}건 있어서 삭제할 수 없어요. 팀원·지출을 먼저 삭제해 주세요")
+        blocked = " · ".join(sorted({r["group_name"] for r in used}))
+        st.error(f"{blocked}에 등록된 팀원·지출이 있어서 삭제할 수 없어요. 팀원·지출을 먼저 삭제해 주세요")
         return
-    try:
-        deleted = supabase.table(TABLE).delete().eq("id", group["id"]).execute().data
-    except APIError as e:
-        st.error(f"Supabase 에서 삭제하지 못했어요 : {e.message}")
-        return
-    if not deleted:
-        # 삭제 권한(policy)이 없으면 오류 없이 0줄만 지워짐
-        st.error("삭제되지 않았어요. Supabase 에서 삭제 권한(policy)을 확인해 주세요")
-        return
-    st.rerun()
+    delete_rows([g["id"] for g in checked])
 
 
 def clear_inputs():
-    # 모임을 바꾸면 앞 모임 팀원을 고른 칸들을 비움
-    for key in ["payer_1", "payer_3", "delete_target", "delete_expense_target_2", "delete_expense_target_3"]:
-        st.session_state.pop(key, None)
+    # 모임을 바꾸면 앞 모임 팀원·지출을 고른 칸들을 비움
+    for key in list(st.session_state.keys()):
+        if key in ("payer_1", "payer_3") or key.startswith("delete_expense_target_"):
+            st.session_state.pop(key)
 
 
-# 왼쪽 칸 : 모임 고르기 · 새 모임 등록
+def member_label(m):
+    return m["member_alias"] + (" (총무)" if m["is_organizer"] else "")
+
+
+# 왼쪽 칸 : 모임 고르기 · 등록 · 삭제
 with st.sidebar:
     st.header("모임")
     if "new_group" in st.session_state:
@@ -136,44 +169,48 @@ with st.sidebar:
         st.session_state.pop("group", None)
     if GROUP_NAMES:
         st.selectbox("지금 보는 모임", GROUP_NAMES, key="group", on_change=clear_inputs)
-    with st.expander("새 모임 등록", expanded=not GROUP_NAMES):
-        new_name = st.text_input("모임 이름", placeholder="예: 친정모임", key="new_group_name")
+    with st.expander("모임 등록·삭제", expanded=not GROUP_NAMES):
+        new_name = st.text_input("모임 이름", placeholder="예: 낭만아줌모임", key="new_group_name")
         if st.button("모임 등록", width="stretch"):
             add_group(new_name)
 
         if groups:
             st.divider()
-            target = st.selectbox(
-                "잘못 등록한 모임 삭제",
-                groups,
-                index=None,
-                format_func=lambda g: g["group_name"],
-                placeholder="삭제할 모임 선택",
-                key="delete_group_target",
-            )
-            if st.button("삭제", width="stretch", key="delete_group"):
-                delete_group(target)
+            st.caption("잘못 등록한 모임은 체크하고 삭제를 눌러주세요")
+            checked = [g for g in groups if st.checkbox(g["group_name"], key=f"del_group_{g['id']}")]
+            if st.button("체크한 모임 삭제", width="stretch", key="delete_groups"):
+                delete_groups(checked)
 
 if not GROUP_NAMES:
-    st.title("경비 지출 입력")
-    st.info("왼쪽 \"새 모임 등록\"에서 모임을 먼저 등록해 주세요")
+    st.title("친목모임 지출 입력")
+    st.info("왼쪽 \"모임 등록·삭제\"에서 모임을 먼저 등록해 주세요")
     st.stop()
 
 GROUP = st.session_state.group
 
-# 팀원 목록 : 별칭, 총무 여부 (지금 고른 모임 것만)
+# 팀원 목록 : 별칭, 총무 여부 (지금 고른 모임 것만, 장부별로 나눔)
 members = load_rows("member", GROUP)
-MEMBER_NAMES = [m["member_alias"] for m in members]
-TREASURER = next((m["member_alias"] for m in members if m["is_organizer"]), None)
+MEMBERS = {b: [m for m in members if m["book"] == b] for b in BOOKS}
+MEMBER_NAMES = {b: [m["member_alias"] for m in MEMBERS[b]] for b in BOOKS}
+TREASURERS = {b: next((m["member_alias"] for m in MEMBERS[b] if m["is_organizer"]), None) for b in BOOKS}
 
 
-def refund_amount(payer, amount):
-    # 총무가 낸 지출은 돌려줄 금액 0, 팀원이 낸 지출은 금액 그대로
-    return 0 if payer == TREASURER else amount
+def refund_amount(book, payer, amount):
+    # 그 장부의 총무가 낸 지출은 돌려줄 금액 0, 팀원이 낸 지출은 금액 그대로
+    return 0 if payer == TREASURERS[book] else amount
 
 
-def load_expenses():
-    rows = load_rows("expense", GROUP)
+def per_person(total, count):
+    # 1인당 금액 : 100원 단위에서 올림 (예: 100,000원 ÷ 3명 = 33,400원)
+    return -(-total // (count * 100)) * 100
+
+
+def won(amount):
+    return f"{int(amount):,}원"
+
+
+def load_expenses(book):
+    rows = load_rows("expense", GROUP, book)
     expenses = pd.DataFrame(
         [
             {
@@ -182,7 +219,7 @@ def load_expenses():
                 "항목": r["item"],
                 "금액": r["amount"],
                 "낸 사람": r["member_alias"],
-                "돌려줄 금액": refund_amount(r["member_alias"], r["amount"]),
+                "돌려줄 금액": refund_amount(book, r["member_alias"], r["amount"]),
             }
             for r in rows
         ],
@@ -191,74 +228,97 @@ def load_expenses():
     return expenses
 
 
+def sort_expenses(expenses, order):
+    # 날짜는 YYYY-MM-DD 글자라 글자 순서가 곧 날짜 순서
+    if order == "날짜순":
+        return expenses.sort_values("날짜", kind="stable")
+    if order == "팀원별":
+        return expenses.sort_values(["낸 사람", "날짜"], kind="stable")
+    return expenses
+
+
 if "page" not in st.session_state:
     st.session_state.page = 1
 
 
-def go(page):
+def go(page, book=None):
     st.session_state.page = page
+    # 화면 2 로 갈 때 열어 둘 탭
+    if book is not None:
+        st.session_state.list_book = book
+        st.session_state.last_book = book
 
 
-def add_member(alias, is_organizer):
+def keep_book():
+    # 열린 탭을 한 번 더 누르면 선택이 풀리므로, 앞에 열려 있던 탭으로 되돌림
+    if st.session_state.list_book is None:
+        st.session_state.list_book = st.session_state.get("last_book", "친목")
+    else:
+        st.session_state.last_book = st.session_state.list_book
+
+
+def add_member(book, alias, is_organizer):
     alias = alias.strip()
     if not alias:
         st.error("팀원 별칭을 넣어주세요")
         return
-    if alias in MEMBER_NAMES:
+    if alias in MEMBER_NAMES[book]:
         st.error("이미 등록된 별칭이에요")
         return
-    if is_organizer and TREASURER:
-        st.error(f"총무는 이미 {TREASURER}(으)로 등록되어 있어요")
+    if is_organizer and TREASURERS[book]:
+        st.error(f"{BOOK_TITLE[book]} 총무는 이미 {TREASURERS[book]}(으)로 등록되어 있어요")
         return
-    row = {"row_type": "member", "group_name": GROUP, "member_alias": alias, "is_organizer": is_organizer}
+    row = {"row_type": "member", "group_name": GROUP, "book": book, "member_alias": alias, "is_organizer": is_organizer}
     if save(row, "팀원을 등록했어요"):
         st.rerun()
 
 
-def delete_member(member):
-    if member is None:
-        st.error("삭제할 팀원을 골라주세요")
+def delete_members(book, checked):
+    if not checked:
+        st.error("삭제할 팀원에 체크해 주세요")
         return
-    alias = member["member_alias"]
+    aliases = [m["member_alias"] for m in checked]
     # 이 팀원이 낸 지출이 있으면 지우지 않음 (지출 줄의 낸 사람이 목록에서 사라지므로)
     used = (
         supabase.table(TABLE)
-        .select("id")
+        .select("member_alias")
         .eq("row_type", "expense")
         .eq("group_name", GROUP)
-        .eq("member_alias", alias)
+        .eq("book", book)
+        .in_("member_alias", aliases)
         .execute()
         .data
     )
     if used:
-        st.error(f"{alias}(이)가 낸 지출이 {len(used)}건 있어서 삭제할 수 없어요")
+        blocked = " · ".join(sorted({r["member_alias"] for r in used}))
+        st.error(f"{blocked}(이)가 낸 지출이 있어서 삭제할 수 없어요")
         return
-    try:
-        deleted = supabase.table(TABLE).delete().eq("id", member["id"]).execute().data
-    except APIError as e:
-        st.error(f"Supabase 에서 삭제하지 못했어요 : {e.message}")
-        return
-    if not deleted:
-        # 삭제 권한(policy)이 없으면 오류 없이 0줄만 지워짐
-        st.error("삭제되지 않았어요. Supabase 에서 삭제 권한(policy)을 확인해 주세요")
-        return
-    st.rerun()
+    delete_rows([m["id"] for m in checked])
 
 
-def delete_expense(expense):
-    if expense is None:
-        st.error("삭제할 지출을 골라주세요")
-        return
-    try:
-        deleted = supabase.table(TABLE).delete().eq("id", expense["id"]).execute().data
-    except APIError as e:
-        st.error(f"Supabase 에서 삭제하지 못했어요 : {e.message}")
-        return
-    if not deleted:
-        # 삭제 권한(policy)이 없으면 오류 없이 0줄만 지워짐
-        st.error("삭제되지 않았어요. Supabase 에서 삭제 권한(policy)을 확인해 주세요")
-        return
-    st.rerun()
+def member_section(book):
+    # 사이드바 : 장부별 팀원 목록 (이름 옆 체크박스로 삭제) · 팀원 등록
+    st.subheader(f"{BOOK_TITLE[book]} 팀원")
+    if MEMBERS[book]:
+        checked = [m for m in MEMBERS[book] if st.checkbox(member_label(m), key=f"del_member_{m['id']}")]
+        if st.button("체크한 팀원 삭제", width="stretch", key=f"delete_members_{book}"):
+            delete_members(book, checked)
+    else:
+        st.caption("아직 없음")
+
+    # 팀원이 아직 없으면 펼쳐 둠
+    with st.expander("팀원 등록", expanded=not MEMBERS[book]):
+        st.caption("실제 이름 대신 별칭(예: 팀원 A)으로 등록해 주세요")
+        alias = st.text_input("팀원 별칭", key=f"alias_{book}")
+        is_organizer = st.checkbox("총무", key=f"is_organizer_{book}")
+        if st.button("팀원 등록", width="stretch", key=f"add_member_{book}"):
+            add_member(book, alias, is_organizer)
+
+
+with st.sidebar:
+    for book in BOOKS:
+        st.divider()
+        member_section(book)
 
 
 def expense_label(r):
@@ -266,17 +326,18 @@ def expense_label(r):
     return f"{r['spent_on']} · {r['item']} · {r['amount']:,}원 · {r['member_alias']}"
 
 
-def add_expense(kind, date, item, amount, payer):
+def add_expense(book, kind, date, item, amount, payer):
     if not date or not item or not amount or payer is None:
         st.error("날짜·항목·금액·낸 사람을 모두 넣어주세요")
         return
-    if payer not in MEMBER_NAMES:
+    if payer not in MEMBER_NAMES[book]:
         st.error("등록된 팀원 중에 없는 이름이에요. 목록에서 골라주세요")
-        st.caption("등록 팀원 : " + " · ".join(MEMBER_NAMES))
+        st.caption("등록 팀원 : " + " · ".join(MEMBER_NAMES[book]))
         return
     row = {
         "row_type": "expense",
         "group_name": GROUP,
+        "book": book,
         "member_alias": payer,
         "spent_on": date.isoformat(),
         "item": item,
@@ -287,13 +348,13 @@ def add_expense(kind, date, item, amount, payer):
 
 
 def date_field(where, key):
-    # 직접 입력도 되고, 칸을 누르면 달력이 열려 클릭으로 고를 수도 있음
-    return where.date_input("날짜", value=None, format="YYYY-MM-DD", key=key)
+    # 오늘 날짜가 미리 들어가 있고, 직접 입력도 되고, 칸을 누르면 달력이 열려 클릭으로 고를 수도 있음
+    return where.date_input("날짜", value="today", format="YYYY-MM-DD", key=key)
 
 
-def expense_delete_form(page):
+def expense_delete_form(book, page):
     # 잘못 입력한 지출 삭제 (화면 2, 3 에서 같이 씀)
-    expense_rows = load_rows("expense", GROUP)
+    expense_rows = load_rows("expense", GROUP, book)
     if not expense_rows:
         return
     st.divider()
@@ -304,97 +365,106 @@ def expense_delete_form(page):
         index=None,
         format_func=expense_label,
         placeholder="삭제할 지출 선택",
-        key=f"delete_expense_target_{page}",
+        key=f"delete_expense_target_{page}_{book}",
     )
-    if c2.button("삭제", width="stretch", key=f"delete_expense_{page}"):
-        delete_expense(target)
+    if c2.button("삭제", width="stretch", key=f"delete_expense_{page}_{book}"):
+        if target is None:
+            st.error("삭제할 지출을 골라주세요")
+        else:
+            delete_rows([target["id"]])
 
 
-def member_form():
-    # 팀원이 아직 없으면 펼쳐 둠
-    with st.expander("팀원 등록", expanded=not MEMBER_NAMES):
-        st.caption("실제 이름 대신 별칭(예: 팀원 A)으로 등록해 주세요")
-        c1, c2 = st.columns([3, 1])
-        alias = c1.text_input("팀원 별칭", key="alias")
-        is_organizer = c2.checkbox("총무", key="is_organizer")
-        if st.button("팀원 등록", width="stretch"):
-            add_member(alias, is_organizer)
+def show_totals(book, expenses):
+    # 총액 · 1인당 금액 (돌려줄 금액과 서로 빼지 않고 보여주기만 함)
+    st.divider()
+    total = int(expenses["금액"].sum())
+    count = len(MEMBERS[book])
+    if book == "여행":
+        c1, c2 = st.columns(2)
+        c1.metric("예약 합계", won(expenses.loc[expenses["구분"] == "예약", "금액"].sum()))
+        c2.metric("현장 합계", won(expenses.loc[expenses["구분"] == "현장", "금액"].sum()))
+    c1, c2 = st.columns(2)
+    c1.metric("총액", won(total))
+    if count:
+        c2.metric(f"1인당 ({count}명)", won(per_person(total, count)))
+        st.caption(f"1인당 금액 = 총액 ÷ {BOOK_TITLE[book]} 팀원 {count}명, 100원 단위에서 올림 · \"돌려줄 금액\"과 서로 빼지 않아요")
+    else:
+        c2.metric("1인당", "-")
+        st.caption(f"왼쪽에서 {BOOK_TITLE[book]} 팀원을 등록하면 1인당 금액이 나와요")
 
-        if members:
-            st.divider()
-            c1, c2 = st.columns([3, 1], vertical_alignment="bottom")
-            target = c1.selectbox(
-                "잘못 등록한 팀원 삭제",
-                members,
-                index=None,
-                format_func=lambda m: m["member_alias"] + (" (총무)" if m["is_organizer"] else ""),
-                placeholder="삭제할 팀원 선택",
-                key="delete_target",
-            )
-            if c2.button("삭제", width="stretch"):
-                delete_member(target)
-
-
-st.caption(f"모임 : {GROUP} · 저장 위치 : Supabase {TABLE} 표 · 총무 : {TREASURER or '아직 없음'}")
 
 # 모든 화면 오른쪽 아래에 챗봇 아이콘
 chatbot()
 
-# 화면 1 : 지출 입력
+# 화면 1 : 친목모임 지출 입력
 if st.session_state.page == 1:
-    st.title("지출 입력")
-    st.caption("화면 1 / 3")
-
-    member_form()
+    st.title("친목모임 지출 입력")
+    st.caption(f"화면 1 / 3 · 모임 : {GROUP} · 총무 : {TREASURERS['친목'] or '아직 없음'}")
 
     # 넣는 자리
     date = date_field(st, "date_1")
     item = st.text_input("항목", placeholder="예: 점심 식사", key="item_1")
     amount = st.number_input("금액 (원)", min_value=0, step=1000, key="amount_1")
     payer = st.selectbox(
-        "낸 사람 (팀원 목록에서 선택)",
-        MEMBER_NAMES,
+        "낸 사람 (친목모임 팀원 목록에서 선택)",
+        MEMBER_NAMES["친목"],
         index=None,
         placeholder="팀원 선택",
         key="payer_1",
     )
-    st.caption("등록 팀원 : " + (" · ".join(MEMBER_NAMES) or "아직 없음"))
+    st.caption("등록 팀원 : " + (" · ".join(MEMBER_NAMES["친목"]) or "아직 없음 (왼쪽에서 친목모임 팀원을 등록해 주세요)"))
 
     # 단추
     b1, b2 = st.columns(2)
     added = b1.button("추가", type="primary", width="stretch")
-    b2.button("지출 목록 보기", on_click=go, args=(2,), width="stretch")
+    b2.button("지출 목록 보기", on_click=go, args=(2, "친목"), width="stretch")
 
     if added:
-        add_expense(None, date, item, amount, payer)
+        add_expense("친목", None, date, item, amount, payer)
 
     # 결과 자리 : 가장 최근에 들어간 한 줄
     st.subheader("결과")
-    latest = load_expenses().tail(1).drop(columns="구분")
+    latest = load_expenses("친목").tail(1).drop(columns="구분")
     st.dataframe(latest, hide_index=True, width="stretch", column_config=MONEY_COLUMNS)
 
-# 화면 2 : 지출 목록
+# 화면 2 : 지출 목록 (친목모임 지출 · 여행 경비 지출 탭)
 elif st.session_state.page == 2:
     st.title("지출 목록")
-    st.caption("화면 2 / 3")
+    st.caption(f"화면 2 / 3 · 모임 : {GROUP}")
 
     # 단추
     b1, b2 = st.columns(2)
-    b1.button("← 지출 입력으로 돌아가기", on_click=go, args=(1,), width="stretch")
+    b1.button("← 친목모임 지출 입력으로 돌아가기", on_click=go, args=(1,), width="stretch")
     b2.button("여행 경비 정리 보기 →", on_click=go, args=(3,), width="stretch")
 
-    # 결과 자리
-    expenses = load_expenses().drop(columns="구분")
-    st.dataframe(expenses, hide_index=True, width="stretch", column_config=MONEY_COLUMNS)
-    st.caption(f"지출 {len(expenses)}건")
-    st.caption(f"낸 사람이 총무({TREASURER or '아직 없음'})가 아니면 \"돌려줄 금액\" 칸에 그 금액이 그대로 나와요")
+    # 탭 : 화면 1 에서 오면 친목모임 지출, 화면 3 에서 오면 여행 경비 지출이 열려 있음
+    if st.session_state.get("list_book") is None:
+        st.session_state.list_book = st.session_state.get("last_book", "친목")
+    book = st.segmented_control(
+        "장부",
+        BOOKS,
+        format_func=lambda b: LIST_TITLE[b],
+        key="list_book",
+        on_change=keep_book,
+        label_visibility="collapsed",
+    ) or "친목"
+    order = st.radio("정렬", ["입력순", "날짜순", "팀원별"], horizontal=True, key="sort_order")
 
-    expense_delete_form(2)
+    # 결과 자리
+    expenses = sort_expenses(load_expenses(book), order)
+    shown = expenses.drop(columns="구분") if book == "친목" else expenses
+    st.dataframe(shown, hide_index=True, width="stretch", column_config=MONEY_COLUMNS)
+    st.caption(f"{LIST_TITLE[book]} {len(expenses)}건")
+    st.caption(f"낸 사람이 {BOOK_TITLE[book]} 총무({TREASURERS[book] or '아직 없음'})가 아니면 \"돌려줄 금액\" 칸에 그 금액이 그대로 나와요")
+
+    show_totals(book, expenses)
+
+    expense_delete_form(book, 2)
 
 # 화면 3 : 여행 경비 정리
 else:
     st.title("여행 경비 정리")
-    st.caption("화면 3 / 3")
+    st.caption(f"화면 3 / 3 · 모임 : {GROUP} · 총무 : {TREASURERS['여행'] or '아직 없음'}")
 
     # 넣는 자리
     with st.container(border=True):
@@ -406,23 +476,25 @@ else:
         c3, c4 = st.columns(2)
         amount = c3.number_input("금액 (원)", min_value=0, step=1000, key="amount_3")
         payer = c4.selectbox(
-            "낸 사람 (카드 주인)",
-            MEMBER_NAMES,
+            "낸 사람 (여행 팀원 중 카드 주인)",
+            MEMBER_NAMES["여행"],
             index=None,
             placeholder="팀원 선택",
             key="payer_3",
         )
+        if not MEMBER_NAMES["여행"]:
+            st.caption("왼쪽에서 여행 팀원을 먼저 등록해 주세요")
 
         # 단추
         b1, b2 = st.columns(2)
         added = b1.button("추가", type="primary", width="stretch")
-        b2.button("← 목록으로 돌아가기", on_click=go, args=(2,), width="stretch")
+        b2.button("← 목록으로 돌아가기", on_click=go, args=(2, "여행"), width="stretch")
 
         if added:
-            add_expense(kind, date, item, amount, payer)
+            add_expense("여행", kind, date, item, amount, payer)
 
     # 결과 자리
-    st.dataframe(load_expenses(), hide_index=True, width="stretch", column_config=MONEY_COLUMNS)
+    st.dataframe(load_expenses("여행"), hide_index=True, width="stretch", column_config=MONEY_COLUMNS)
     st.caption("예약 비용과 현장 경비가 입력한 순서대로 같은 표 안에 쌓여요")
 
-    expense_delete_form(3)
+    expense_delete_form("여행", 3)
