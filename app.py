@@ -9,7 +9,7 @@ from supabase import create_client
 from chatbot import chatbot
 
 # 넓은 화면 : 왼쪽 넣는 칸 · 가운데 결과를 스크롤 없이 한눈에 보도록
-st.set_page_config(page_title="경비 지출 입력", layout="wide")
+st.set_page_config(page_title="총무노트", page_icon="💰", layout="wide")
 
 # .env 의 SUPABASE_URL, SUPABASE_KEY 로 Supabase 에 연결
 load_dotenv()
@@ -175,6 +175,12 @@ def group_section():
             delete_groups(checked)
 
 
+def service_header():
+    # 첫 화면 맨 위 : 서비스 이름 크게 + 처음 쓰는 사람도 알 수 있는 한 줄 설명
+    st.title("💰 총무노트")
+    st.caption("지출마다 날짜·항목·금액·낸 사람(카드)을 적으면, 총무가 아닌 팀원 카드로 낸 지출은 그 팀원에게 돌려줄 금액이 자동으로 나와요")
+
+
 # 사이드바 : 지금 보는 모임 고르기
 with st.sidebar:
     st.header("모임")
@@ -190,7 +196,7 @@ if not GROUP_NAMES:
     # 모임이 하나도 없으면 첫 화면 가운데 열에 모임 등록 칸만
     _, center, _ = st.columns([1, 2, 1])
     with center:
-        st.title("경비 지출 입력")
+        service_header()
         st.info("아래에서 모임을 먼저 등록해 주세요")
         group_section()
     st.stop()
@@ -402,6 +408,8 @@ def expense_list(book):
 
 # 모든 화면 오른쪽 아래에 챗봇 아이콘
 chatbot()
+
+service_header()
 
 # 위 탭 3개 : 장부 두 개 + 가끔 쓰는 관리
 tab_friend, tab_trip, tab_manage = st.tabs(["친목모임 지출", "여행 경비", "모임·팀원 관리"])
