@@ -1,6 +1,7 @@
 # 비밀 값 (API 키 등)
 .env
 .env.*
+!.env.example
 .streamlit/secrets.toml
 
 # 파이썬 실행 시 자동 생성되는 캐시
