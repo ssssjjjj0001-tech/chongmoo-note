@@ -7,9 +7,15 @@ from postgrest.exceptions import APIError
 from supabase import create_client
 
 from chatbot import chatbot
+from landing import landing
 
 # 넓은 화면 : 왼쪽 넣는 칸 · 가운데 결과를 스크롤 없이 한눈에 보도록
 st.set_page_config(page_title="총무노트", page_icon="💰", layout="wide")
+
+# 처음 열면 서비스 소개 첫 화면부터 (「시작하기」를 누르면 아래 기능 화면으로)
+if st.session_state.get("page", "landing") == "landing":
+    landing()
+    st.stop()
 
 # .env 의 SUPABASE_URL, SUPABASE_KEY 로 Supabase 에 연결
 load_dotenv()
@@ -181,8 +187,13 @@ def service_header():
     st.caption("지출마다 날짜·항목·금액·낸 사람(카드)을 적으면, 총무가 아닌 팀원 카드로 낸 지출은 그 팀원에게 돌려줄 금액이 자동으로 나와요")
 
 
-# 사이드바 : 지금 보는 모임 고르기
+def go_to_landing():
+    st.session_state.page = "landing"
+
+
+# 사이드바 : 첫 화면으로 돌아가기 · 지금 보는 모임 고르기
 with st.sidebar:
+    st.button("← 첫 화면으로", width="stretch", key="to_landing", on_click=go_to_landing)
     st.header("모임")
     if "new_group" in st.session_state:
         st.session_state.group = st.session_state.pop("new_group")
