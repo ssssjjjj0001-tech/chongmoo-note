@@ -26,6 +26,20 @@ STYLE = f"""<style>
 .st-key-start {{ margin-top: 2.5rem; }}
 .st-key-start button {{ background: {ACCENT}; border-color: {ACCENT}; }}
 .st-key-start button, .st-key-start button * {{ color: #ffffff; font-size: 1.2rem; font-weight: 700; }}
+/* 휴대폰(폭 640px 이하) : 스크롤 없이 첫 화면이 한 번에 보이도록 여백을 줄이고, 글자 크기를 화면 높이에 맞춤 */
+@media (max-width: 640px) {{
+  [data-testid="stMainBlockContainer"] {{ --unit: min(4.2vw, 2.6dvh); box-sizing: border-box; min-height: 100dvh; padding: 2.75rem 1rem 3rem; display: flex; flex-direction: column; justify-content: center; }}
+  [data-testid="stMainBlockContainer"] [data-testid="stVerticalBlock"], [data-testid="stHorizontalBlock"] {{ gap: 0.5rem; }}
+  [data-testid="stMarkdownContainer"] {{ margin-bottom: 0; }}
+  [data-testid="stHorizontalBlock"]:has(.st-key-start) [data-testid="stColumn"]:not(:has(.st-key-start)) {{ display: none; }}
+  .landing-title {{ font-size: calc(var(--unit) * 2); margin: 0; }}
+  .landing-intro {{ font-size: var(--unit); margin-bottom: 0.25rem; word-break: keep-all; }}
+  .landing-card {{ display: grid; grid-template-columns: auto 1fr; column-gap: 0.6rem; padding: 0.5rem 0.7rem; }}
+  .landing-icon {{ grid-row: span 2; align-self: center; font-size: calc(var(--unit) * 1.8); }}
+  .landing-card h3 {{ margin: 0; padding: 0; font-size: calc(var(--unit) * 1.05); }}
+  .landing-card p {{ margin: 0; font-size: calc(var(--unit) * 0.95); line-height: 1.35; word-break: keep-all; }}
+  .st-key-start {{ margin-top: 0.25rem; }}
+}}
 </style>"""
 
 
