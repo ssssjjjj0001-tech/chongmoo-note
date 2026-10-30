@@ -1,0 +1,11 @@
+altair
+google-genai
+pandas
+pillow
+postgrest
+pydeck
+python-dotenv
+requests
+storage3
+streamlit
+supabase
