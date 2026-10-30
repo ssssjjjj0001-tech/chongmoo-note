@@ -1,12 +1,12 @@
-import os
+import html
 
 import pandas as pd
 import streamlit as st
-from dotenv import load_dotenv
 from postgrest.exceptions import APIError
 from supabase import create_client
 
 from chatbot import chatbot
+from keys import get_key
 from landing import landing
 
 # 넓은 화면 : 왼쪽 넣는 칸 · 가운데 결과를 스크롤 없이 한눈에 보도록
@@ -17,9 +17,8 @@ if st.session_state.get("page", "landing") == "landing":
     landing()
     st.stop()
 
-# .env 의 SUPABASE_URL, SUPABASE_KEY 로 Supabase 에 연결
-load_dotenv()
-supabase = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_KEY"])
+# .env(내 컴퓨터) 또는 Secrets(올린 곳) 의 SUPABASE_URL, SUPABASE_KEY 로 Supabase 에 연결
+supabase = create_client(get_key("SUPABASE_URL"), get_key("SUPABASE_KEY"))
 
 # submissions 표 : 한 표에 모임 줄(row_type=group), 팀원 줄(row_type=member), 지출 줄(row_type=expense)을 함께 쌓음
 # 팀원 줄과 지출 줄은 group_name 칸으로 어느 모임 것인지, book 칸으로 어느 장부(친목/여행) 것인지 나눔
@@ -70,6 +69,23 @@ MONEY_COLUMNS = {
     "금액": st.column_config.NumberColumn(format="localized"),
     "돌려줄 금액": st.column_config.NumberColumn(format="localized"),
 }
+
+# 화면 폭 640px 이하(휴대폰)에서만 : 칸 너비가 고정된 st.dataframe 대신 폭에 맞는 표를 보여주고, 표를 넣는 칸 위로 올림
+PHONE_TABLE_STYLE = """<style>
+[data-testid="stElementContainer"]:has(.expense-phone) { display: none; }
+.expense-phone table { width: 100%; margin: 0; border-collapse: collapse; font-size: 0.8rem; }
+.expense-phone th, .expense-phone td { padding: 0.35rem 0.2rem; border: 0; border-bottom: 1px solid rgba(128, 128, 128, 0.3); text-align: left; word-break: keep-all; overflow-wrap: anywhere; }
+.expense-phone th, .expense-phone .nowrap { white-space: nowrap; }
+.expense-phone .money { text-align: right; white-space: nowrap; }
+.expense-phone th.money { white-space: normal; }
+@media (max-width: 640px) {
+  [data-testid="stColumn"]:has(.expense-phone) { order: -1; }
+  [data-testid="stColumn"]:has(.expense-phone) [data-testid="stElementContainer"]:has([data-testid="stDataFrame"]) { display: none; }
+  [data-testid="stElementContainer"]:has(.expense-phone) { display: block; }
+  [data-testid="stColumn"]:has(.expense-phone) [data-testid="stColumn"] { flex: 1 1 calc(50% - 0.5rem); min-width: calc(50% - 0.5rem); }
+  [data-testid="stColumn"]:has(.expense-phone) [data-testid="stMetricValue"], [data-testid="stColumn"]:has(.expense-phone) [data-testid="stMetricValue"] * { font-size: 1.3rem; }
+}
+</style>"""
 
 
 def load_rows(row_type, group=None, book=None):
@@ -402,6 +418,29 @@ def show_totals(book, expenses):
         st.caption(f"모임·팀원 관리 탭에서 {BOOK_TITLE[book]} 팀원을 등록하면 1인당 금액이 나와요")
 
 
+def phone_class(column):
+    return "money" if column in MONEY_COLUMNS else "nowrap" if column in ("구분", "날짜") else ""
+
+
+def phone_cell(column, value):
+    # 휴대폰 표의 한 칸 : 금액은 천 단위 쉼표, 글자는 입력한 값 그대로 보이도록 이스케이프
+    text = "" if pd.isna(value) else f"{int(value):,}" if column in MONEY_COLUMNS else html.escape(str(value))
+    return f'<td class="{phone_class(column)}">{text}</td>'
+
+
+def phone_table(shown):
+    # st.dataframe 과 같은 줄·같은 칸을 휴대폰 폭에 맞는 표로 (넓은 화면에서는 숨김)
+    head = "".join(f'<th class="{phone_class(column)}">{column}</th>' for column in shown.columns)
+    rows = "".join(
+        "<tr>" + "".join(phone_cell(column, row[column]) for column in shown.columns) + "</tr>"
+        for _, row in shown.iterrows()
+    )
+    st.markdown(
+        f'{PHONE_TABLE_STYLE}<div class="expense-phone"><table><thead><tr>{head}</tr></thead><tbody>{rows}</tbody></table></div>',
+        unsafe_allow_html=True,
+    )
+
+
 def expense_list(book):
     # 가운데 열 : 맨 위 합계 한 줄, 그 아래 정렬과 지출 목록 표 (입력순이면 방금 추가한 줄이 표 맨 아래에 쌓임)
     expenses = load_expenses(book)
@@ -411,6 +450,7 @@ def expense_list(book):
     if book == "친목":
         shown = shown.drop(columns="구분")
     st.dataframe(shown, hide_index=True, width="stretch", column_config=MONEY_COLUMNS)
+    phone_table(shown)
     st.caption(f"{LIST_TITLE[book]} {len(expenses)}건")
     st.caption(f"낸 사람이 {BOOK_TITLE[book]} 총무({TREASURERS[book] or '아직 없음'})가 아니면 \"돌려줄 금액\" 칸에 그 금액이 그대로 나와요")
     if book == "여행":

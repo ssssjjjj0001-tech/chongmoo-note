@@ -1,15 +1,13 @@
-import os
-
 import streamlit as st
-from dotenv import load_dotenv
 from postgrest.exceptions import APIError
 from supabase import create_client
 
+from keys import get_key
+
 st.set_page_config(page_title="내 지출 기록")
 
-# .env 의 SUPABASE_URL, SUPABASE_KEY 로 Supabase 에 연결
-load_dotenv()
-supabase = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_KEY"])
+# .env(내 컴퓨터) 또는 Secrets(올린 곳) 의 SUPABASE_URL, SUPABASE_KEY 로 Supabase 에 연결
+supabase = create_client(get_key("SUPABASE_URL"), get_key("SUPABASE_KEY"))
 
 # submissions 표 : 팀원 줄(row_type=member)과 지출 줄(row_type=expense)을 함께 쌓음
 # 이 화면은 지출 줄을 넣고, 넣은 지출 줄을 다시 보여줌

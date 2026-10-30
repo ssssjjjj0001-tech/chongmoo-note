@@ -1,19 +1,18 @@
 import base64
 import json
-import os
 from io import BytesIO
 from pathlib import Path
 
 import streamlit as st
-from dotenv import load_dotenv
 from google import genai
 from PIL import Image
 from supabase import create_client
 
-# helper.py 와 같은 방식 : .env 의 GEMINI_API_KEY 로 Gemini 를 부름
-load_dotenv()
+from keys import get_key
 
-# .env 의 SUPABASE_URL, SUPABASE_KEY 로 Supabase 에 연결
+# helper.py 와 같은 방식 : .env(내 컴퓨터) 또는 Secrets(올린 곳) 의 GEMINI_API_KEY 로 Gemini 를 부름
+
+# .env(내 컴퓨터) 또는 Secrets(올린 곳) 의 SUPABASE_URL, SUPABASE_KEY 로 Supabase 에 연결
 # chat_logs 표 : id, created_at, tone, question, answer
 CHAT_TABLE = "chat_logs"
 HISTORY_LIMIT = 20
@@ -93,7 +92,7 @@ def tone_instruction():
 
 @st.cache_resource
 def supabase():
-    return create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_KEY"])
+    return create_client(get_key("SUPABASE_URL"), get_key("SUPABASE_KEY"))
 
 
 def save_log(question, answer):
@@ -133,9 +132,9 @@ def answer_ok(text):
 
 
 def ask(question):
-    api_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    api_key = get_key("GEMINI_API_KEY")
     if not api_key:
-        return "GEMINI_API_KEY 가 비어 있어서 답할 수 없어요. .env 에 값을 넣어주세요"
+        return "GEMINI_API_KEY 가 비어 있어서 답할 수 없어요. .env 또는 Secrets 에 값을 넣어주세요"
     try:
         client = genai.Client(api_key=api_key)
         options = {}

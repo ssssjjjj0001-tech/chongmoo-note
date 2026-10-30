@@ -1,18 +1,17 @@
-import os
 import uuid
 from datetime import datetime
 from pathlib import Path
 
 import streamlit as st
-from dotenv import load_dotenv
 from storage3.exceptions import StorageApiError
 from supabase import create_client
 
+from keys import get_key
+
 st.set_page_config(page_title="사진 보관함", layout="wide")
 
-# .env 의 SUPABASE_URL, SUPABASE_KEY 로 Supabase 에 연결
-load_dotenv()
-supabase = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_KEY"])
+# .env(내 컴퓨터) 또는 Secrets(올린 곳) 의 SUPABASE_URL, SUPABASE_KEY 로 Supabase 에 연결
+supabase = create_client(get_key("SUPABASE_URL"), get_key("SUPABASE_KEY"))
 
 # photos 버킷 : 공개(public) 버킷이라 주소만 있으면 그림을 볼 수 있음
 # 버킷과 허용 규칙은 data/79_photos_storage.sql 을 Supabase SQL Editor 에서 실행해 만듦

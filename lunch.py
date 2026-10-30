@@ -1,17 +1,16 @@
 import math
-import os
 
 import altair as alt
 import pandas as pd
 import pydeck as pdk
 import requests
 import streamlit as st
-from dotenv import load_dotenv
+
+from keys import get_key
 
 st.set_page_config(page_title="맛집 대시보드", layout="wide")
 
-# .env 의 KAKAO_REST_API_KEY 로 카카오 로컬 API 를 부름
-load_dotenv()
+# .env(내 컴퓨터) 또는 Secrets(올린 곳) 의 KAKAO_REST_API_KEY 로 카카오 로컬 API 를 부름
 
 # 카카오 로컬 API (공식 문서: https://developers.kakao.com/docs/latest/ko/local/dev-guide)
 # 인증 헤더는 "Authorization: KakaoAK {REST API 키}"
@@ -38,12 +37,12 @@ PICK_RGB = [235, 110, 30]
 
 
 def kakao_get(url, params):
-    key = os.environ.get("KAKAO_REST_API_KEY")
+    key = get_key("KAKAO_REST_API_KEY")
     if not key:
-        raise RuntimeError(".env 에 KAKAO_REST_API_KEY 가 없어요. 키를 넣고 다시 실행해 주세요.")
+        raise RuntimeError(".env 또는 Secrets 에 KAKAO_REST_API_KEY 가 없어요. 키를 넣고 다시 실행해 주세요.")
     res = requests.get(url, headers={"Authorization": f"KakaoAK {key}"}, params=params, timeout=10)
     if res.status_code == 401:
-        raise RuntimeError("카카오 REST API 키가 맞지 않아요. .env 의 KAKAO_REST_API_KEY 를 확인해 주세요.")
+        raise RuntimeError("카카오 REST API 키가 맞지 않아요. .env 또는 Secrets 의 KAKAO_REST_API_KEY 를 확인해 주세요.")
     if res.status_code == 403:
         raise RuntimeError("카카오맵(로컬) API 사용 권한이 없어요. 카카오 디벨로퍼스 앱 설정에서 카카오맵을 켜 주세요.")
     res.raise_for_status()

@@ -1,18 +1,17 @@
-import os
 import uuid
 from datetime import datetime
 from pathlib import Path
 
 import streamlit as st
-from dotenv import load_dotenv
 from storage3.exceptions import StorageApiError
 from supabase import create_client
 
+from keys import get_key
+
 st.set_page_config(page_title="문서 보관함", layout="wide")
 
-# .env 의 SUPABASE_URL, SUPABASE_KEY 로 Supabase 에 연결
-load_dotenv()
-supabase = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_KEY"])
+# .env(내 컴퓨터) 또는 Secrets(올린 곳) 의 SUPABASE_URL, SUPABASE_KEY 로 Supabase 에 연결
+supabase = create_client(get_key("SUPABASE_URL"), get_key("SUPABASE_KEY"))
 
 # docs 버킷 : 비공개(private) 버킷이라 주소만으로는 못 열고, 잠깐만 열리는 내려받기 링크로만 받을 수 있음
 # 버킷과 허용 규칙은 data/80_docs_storage.sql 을 Supabase SQL Editor 에서 실행해 만듦

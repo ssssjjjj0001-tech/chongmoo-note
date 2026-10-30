@@ -1,17 +1,16 @@
-import os
 from datetime import date
 
 import pandas as pd
 import streamlit as st
-from dotenv import load_dotenv
 from postgrest.exceptions import APIError
 from supabase import create_client
 
+from keys import get_key
+
 st.set_page_config(page_title="구독 정리함")
 
-# .env 의 SUPABASE_URL, SUPABASE_KEY 로 Supabase 에 연결
-load_dotenv()
-supabase = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_KEY"])
+# .env(내 컴퓨터) 또는 Secrets(올린 곳) 의 SUPABASE_URL, SUPABASE_KEY 로 Supabase 에 연결
+supabase = create_client(get_key("SUPABASE_URL"), get_key("SUPABASE_KEY"))
 
 # subscriptions 표 : id, name(구독 이름), category(분류), monthly_fee(한 달 요금), last_used(마지막으로 쓴 날), created_at
 # 표는 data/76_subscriptions.sql 을 Supabase SQL Editor 에서 실행해 만듦

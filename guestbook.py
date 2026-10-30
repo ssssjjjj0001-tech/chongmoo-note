@@ -1,14 +1,12 @@
-import os
-
 import streamlit as st
-from dotenv import load_dotenv
 from supabase import create_client
+
+from keys import get_key
 
 st.set_page_config(page_title="한 줄 방명록")
 
-# .env 의 SUPABASE_URL, SUPABASE_KEY 로 Supabase 에 연결
-load_dotenv()
-supabase = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_KEY"])
+# .env(내 컴퓨터) 또는 Secrets(올린 곳) 의 SUPABASE_URL, SUPABASE_KEY 로 Supabase 에 연결
+supabase = create_client(get_key("SUPABASE_URL"), get_key("SUPABASE_KEY"))
 
 # guestbook 표 : id, created_at, message
 TABLE = "guestbook"
