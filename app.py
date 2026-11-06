@@ -533,3 +533,6 @@ with tab_manage:
     st.subheader("잘못 입력한 지출 삭제")
     delete_book = st.radio("장부", BOOKS, format_func=lambda b: LIST_TITLE[b], horizontal=True, key="delete_book")
     expense_delete_form(delete_book)
+
+# 화면 맨 아래 : 마지막으로 고친 날
+st.caption("마지막으로 고친 날 2026-11-06· 기능 화면 안내 글을 넣음")
